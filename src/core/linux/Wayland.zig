@@ -25,11 +25,11 @@ pub const c = @cImport({
 
 // This needs to be declared here so it can be used in the exported functions below,
 // but doesn't need to be defined until run time (and can't be defined until run time).
-var libwaylandclient: LibWaylandClient = undefined;
+pub var libwaylandclient: ?LibWaylandClient = null;
 
 // This does not need to be declared here, but we are declaring it here to be consistent
 // with `libwaylandclient`.
-var libxkbcommon: LibXkbCommon = undefined;
+pub var libxkbcommon: ?LibXkbCommon = null;
 
 var core_ptr: *Core = undefined;
 
@@ -38,19 +38,19 @@ var core_ptr: *Core = undefined;
 // compile time, but since they are not run until run time, after `libwaylandclient` is
 // defined, an error never occurs.
 export fn wl_proxy_add_listener(proxy: ?*c.struct_wl_proxy, implementation: [*c]?*const fn () callconv(.C) void, data: ?*anyopaque) c_int {
-    return @call(.always_tail, libwaylandclient.wl_proxy_add_listener, .{ proxy, implementation, data });
+    return @call(.always_tail, libwaylandclient.?.wl_proxy_add_listener, .{ proxy, implementation, data });
 }
 export fn wl_proxy_get_version(proxy: ?*c.struct_wl_proxy) u32 {
-    return @call(.always_tail, libwaylandclient.wl_proxy_get_version, .{proxy});
+    return @call(.always_tail, libwaylandclient.?.wl_proxy_get_version, .{proxy});
 }
 export fn wl_proxy_marshal_flags(proxy: ?*c.struct_wl_proxy, opcode: u32, interface: [*c]const c.struct_wl_interface, version: u32, flags: u32, ...) ?*c.struct_wl_proxy {
     var arg_list: std.builtin.VaList = @cVaStart();
     defer @cVaEnd(&arg_list);
 
-    return @call(.always_tail, libwaylandclient.wl_proxy_marshal_flags, .{ proxy, opcode, interface, version, flags, arg_list });
+    return @call(.always_tail, libwaylandclient.?.wl_proxy_marshal_flags, .{ proxy, opcode, interface, version, flags, arg_list });
 }
 export fn wl_proxy_destroy(proxy: ?*c.struct_wl_proxy) void {
-    return @call(.always_tail, libwaylandclient.wl_proxy_destroy, .{proxy});
+    return @call(.always_tail, libwaylandclient.?.wl_proxy_destroy, .{proxy});
 }
 
 pub const Native = struct {
@@ -87,7 +87,7 @@ pub fn initWindow(
     core_window.native = .{
         .wayland = .{
             .interfaces = Interfaces{},
-            .display = libwaylandclient.wl_display_connect(null) orelse return error.FailedToConnectToDisplay,
+            .display = libwaylandclient.?.wl_display_connect(null) orelse return error.FailedToConnectToDisplay,
             .modifiers = .{
                 .alt = false,
                 .caps_lock = false,
@@ -108,7 +108,7 @@ pub fn initWindow(
             .surface_descriptor = undefined,
             .surface = undefined,
             .toplevel = undefined,
-            .xkb_context = libxkbcommon.xkb_context_new(0) orelse return error.FailedToGetXkbContext,
+            .xkb_context = libxkbcommon.?.xkb_context_new(0) orelse return error.FailedToGetXkbContext,
         },
     };
 
@@ -124,10 +124,10 @@ pub fn initWindow(
 
     // TODO: Look at replacing these 2 calls to wl_display_roundtrip with wl_display::sync
     // Round trip to get all the registry objects
-    _ = libwaylandclient.wl_display_roundtrip(wl.display);
+    _ = libwaylandclient.?.wl_display_roundtrip(wl.display);
 
     // Round trip to get all initial output events
-    _ = libwaylandclient.wl_display_roundtrip(wl.display);
+    _ = libwaylandclient.?.wl_display_roundtrip(wl.display);
 
     // Update `core_window` since registry listener and seat listener changed values in it
     core_window = core.windows.getValue(window_id);
@@ -174,7 +174,7 @@ pub fn initWindow(
     }
 
     // Wait for events to get pushed
-    _ = libwaylandclient.wl_display_roundtrip(wl.display);
+    _ = libwaylandclient.?.wl_display_roundtrip(wl.display);
 
     core_window = core.windows.getValue(window_id);
     wl = &core_window.native.?.wayland;
@@ -183,7 +183,7 @@ pub fn initWindow(
     c.wl_surface_commit(wl.surface);
 
     while (true) {
-        const result = libwaylandclient.wl_display_dispatch(wl.display);
+        const result = libwaylandclient.?.wl_display_dispatch(wl.display);
 
         core_window = core.windows.getValue(window_id);
         wl = &core_window.native.?.wayland;
@@ -203,7 +203,7 @@ pub fn initWindow(
     // Commit changes to surface
     c.wl_surface_commit(wl.surface);
 
-    _ = libwaylandclient.wl_display_roundtrip(wl.display);
+    _ = libwaylandclient.?.wl_display_roundtrip(wl.display);
 
     core.windows.setValue(window_id, core_window);
     try core.initWindow(window_id);
@@ -219,14 +219,14 @@ pub fn initWindow(
 pub fn tick(window_id: mach.ObjectID) !void {
     const wl = &core_ptr.windows.getValue(window_id).native.?.wayland;
 
-    while (libwaylandclient.wl_display_flush(wl.display) == -1) {
+    while (libwaylandclient.?.wl_display_flush(wl.display) == -1) {
         if (std.posix.errno(-1) == std.posix.E.AGAIN) {
             log.err("flush error", .{});
             return error.FlushError;
         }
         var pollfd = [_]std.posix.pollfd{
             std.posix.pollfd{
-                .fd = libwaylandclient.wl_display_get_fd(wl.display),
+                .fd = libwaylandclient.?.wl_display_get_fd(wl.display),
                 .events = std.posix.POLL.OUT,
                 .revents = 0,
             },
@@ -240,7 +240,7 @@ pub fn tick(window_id: mach.ObjectID) !void {
         }
     }
 
-    _ = libwaylandclient.wl_display_roundtrip(wl.display);
+    _ = libwaylandclient.?.wl_display_roundtrip(wl.display);
 }
 
 pub fn setTitle(wl: *const Native, title: [:0]const u8) void {
@@ -252,7 +252,7 @@ pub fn setDisplayMode(wl: *Wayland, display_mode: DisplayMode) void {
     _ = display_mode;
 }
 
-const LibXkbCommon = struct {
+pub const LibXkbCommon = struct {
     handle: std.DynLib,
 
     xkb_context_new: *const @TypeOf(c.xkb_context_new),
@@ -272,9 +272,11 @@ const LibXkbCommon = struct {
     xkb_compose_state_get_one_sym: *const @TypeOf(c.xkb_compose_state_get_one_sym),
     xkb_keysym_to_utf32: *const @TypeOf(c.xkb_keysym_to_utf32),
 
+    pub const lib_name = "libxkbcommon.so.0";
+
     pub fn load() !LibXkbCommon {
         var lib: LibXkbCommon = undefined;
-        lib.handle = try mach.dynLibOpen("libxkbcommon.so.0");
+        lib.handle = std.DynLib.open(lib_name) catch return error.LibraryNotFound;
         inline for (@typeInfo(LibXkbCommon).@"struct".fields[1..]) |field| {
             const name = std.fmt.comptimePrint("{s}\x00", .{field.name});
             const name_z: [:0]const u8 = @ptrCast(name[0 .. name.len - 1]);
@@ -287,7 +289,7 @@ const LibXkbCommon = struct {
     }
 };
 
-const LibWaylandClient = struct {
+pub const LibWaylandClient = struct {
     handle: std.DynLib,
 
     wl_display_connect: *const @TypeOf(c.wl_display_connect),
@@ -325,9 +327,11 @@ const LibWaylandClient = struct {
     wl_surface_interface: *@TypeOf(c.wl_surface_interface),
     wl_touch_interface: *@TypeOf(c.wl_touch_interface),
 
+    pub const lib_name = "libwayland-client.so.0";
+
     pub fn load() !LibWaylandClient {
         var lib: LibWaylandClient = undefined;
-        lib.handle = try mach.dynLibOpen("libwayland-client.so.0");
+        lib.handle = std.DynLib.open(lib_name) catch return error.LibraryNotFound;
         inline for (@typeInfo(LibWaylandClient).@"struct".fields[1..]) |field| {
             const name = std.fmt.comptimePrint("{s}\x00", .{field.name});
             const name_z: [:0]const u8 = @ptrCast(name[0 .. name.len - 1]);
@@ -370,7 +374,7 @@ const registry_listener = struct {
             wl.interfaces.wl_compositor = @ptrCast(c.wl_registry_bind(
                 registry,
                 name,
-                libwaylandclient.wl_compositor_interface,
+                libwaylandclient.?.wl_compositor_interface,
                 @min(3, version),
             ) orelse @panic("uh idk how to proceed"));
         } else if (std.mem.eql(u8, "wl_subcompositor", interface)) {
@@ -378,7 +382,7 @@ const registry_listener = struct {
             wl.interfaces.wl_subcompositor = @ptrCast(c.wl_registry_bind(
                 registry,
                 name,
-                libwaylandclient.wl_subcompositor_interface,
+                libwaylandclient.?.wl_subcompositor_interface,
                 @min(3, version),
             ) orelse @panic("uh idk how to proceed"));
         } else if (std.mem.eql(u8, "wl_shm", interface)) {
@@ -386,7 +390,7 @@ const registry_listener = struct {
             wl.interfaces.wl_shm = @ptrCast(c.wl_registry_bind(
                 registry,
                 name,
-                libwaylandclient.wl_shm_interface,
+                libwaylandclient.?.wl_shm_interface,
                 @min(3, version),
             ) orelse @panic("uh idk how to proceed"));
         } else if (std.mem.eql(u8, "wl_output", interface)) {
@@ -394,14 +398,14 @@ const registry_listener = struct {
             wl.interfaces.wl_output = @ptrCast(c.wl_registry_bind(
                 registry,
                 name,
-                libwaylandclient.wl_output_interface,
+                libwaylandclient.?.wl_output_interface,
                 @min(3, version),
             ) orelse @panic("uh idk how to proceed"));
             // } else if (std.mem.eql(u8, "wl_data_device_manager", interface)) {
             //     wl.interfaces.wl_data_device_manager = @ptrCast(c.wl_registry_bind(
             //         registry,
             //         name,
-            //         libwaylandclient.wl_data_device_manager_interface,
+            //         libwaylandclient.?.wl_data_device_manager_interface,
             //         @min(3, version),
             //     ) orelse @panic("uh idk how to proceed"));
         } else if (std.mem.eql(u8, "xdg_wm_base", interface)) {
@@ -425,7 +429,7 @@ const registry_listener = struct {
             wl.interfaces.wl_seat = @ptrCast(c.wl_registry_bind(
                 registry,
                 name,
-                libwaylandclient.wl_seat_interface,
+                libwaylandclient.?.wl_seat_interface,
                 @min(3, version),
             ) orelse @panic("uh idk how to proceed"));
 
@@ -464,7 +468,7 @@ const keyboard_listener = struct {
 
         const map_str = std.posix.mmap(null, keymap_size, std.posix.PROT.READ, .{ .TYPE = .SHARED }, fd, 0) catch unreachable;
 
-        const keymap = libxkbcommon.xkb_keymap_new_from_string(
+        const keymap = libxkbcommon.?.xkb_keymap_new_from_string(
             wl.xkb_context,
             @alignCast(map_str), //align cast happening here, im sure its fine? TODO: figure out if this okay
             c.XKB_KEYMAP_FORMAT_TEXT_V1,
@@ -477,13 +481,13 @@ const keyboard_listener = struct {
         std.posix.close(fd);
 
         //Release reference to old state and create new state
-        libxkbcommon.xkb_state_unref(wl.xkb_state);
-        const state = libxkbcommon.xkb_state_new(keymap).?;
+        libxkbcommon.?.xkb_state_unref(wl.xkb_state);
+        const state = libxkbcommon.?.xkb_state_new(keymap).?;
 
         //this chain hurts me. why must C be this way.
         const locale = std.posix.getenv("LC_ALL") orelse std.posix.getenv("LC_CTYPE") orelse std.posix.getenv("LANG") orelse "C";
 
-        var compose_table = libxkbcommon.xkb_compose_table_new_from_locale(
+        var compose_table = libxkbcommon.?.xkb_compose_table_new_from_locale(
             wl.xkb_context,
             locale,
             c.XKB_COMPOSE_COMPILE_NO_FLAGS,
@@ -491,24 +495,24 @@ const keyboard_listener = struct {
 
         //If creation failed, lets try the C locale
         if (compose_table == null)
-            compose_table = libxkbcommon.xkb_compose_table_new_from_locale(
+            compose_table = libxkbcommon.?.xkb_compose_table_new_from_locale(
                 wl.xkb_context,
                 "C",
                 c.XKB_COMPOSE_COMPILE_NO_FLAGS,
             ).?;
 
-        defer libxkbcommon.xkb_compose_table_unref(compose_table);
+        defer libxkbcommon.?.xkb_compose_table_unref(compose_table);
 
         wl.keymap = keymap;
         wl.xkb_state = state;
-        wl.compose_state = libxkbcommon.xkb_compose_state_new(compose_table, c.XKB_COMPOSE_STATE_NO_FLAGS).?;
+        wl.compose_state = libxkbcommon.?.xkb_compose_state_new(compose_table, c.XKB_COMPOSE_STATE_NO_FLAGS).?;
 
-        wl.modifier_indices.control_index = libxkbcommon.xkb_keymap_mod_get_index(keymap, "Control");
-        wl.modifier_indices.alt_index = libxkbcommon.xkb_keymap_mod_get_index(keymap, "Mod1");
-        wl.modifier_indices.shift_index = libxkbcommon.xkb_keymap_mod_get_index(keymap, "Shift");
-        wl.modifier_indices.super_index = libxkbcommon.xkb_keymap_mod_get_index(keymap, "Mod4");
-        wl.modifier_indices.caps_lock_index = libxkbcommon.xkb_keymap_mod_get_index(keymap, "Lock");
-        wl.modifier_indices.num_lock_index = libxkbcommon.xkb_keymap_mod_get_index(keymap, "Mod2");
+        wl.modifier_indices.control_index = libxkbcommon.?.xkb_keymap_mod_get_index(keymap, "Control");
+        wl.modifier_indices.alt_index = libxkbcommon.?.xkb_keymap_mod_get_index(keymap, "Mod1");
+        wl.modifier_indices.shift_index = libxkbcommon.?.xkb_keymap_mod_get_index(keymap, "Shift");
+        wl.modifier_indices.super_index = libxkbcommon.?.xkb_keymap_mod_get_index(keymap, "Mod4");
+        wl.modifier_indices.caps_lock_index = libxkbcommon.?.xkb_keymap_mod_get_index(keymap, "Lock");
+        wl.modifier_indices.num_lock_index = libxkbcommon.?.xkb_keymap_mod_get_index(keymap, "Mod2");
 
         core_ptr.windows.setValue(window_id, core_window);
     }
@@ -545,12 +549,12 @@ const keyboard_listener = struct {
 
             var keysyms: ?[*]const c.xkb_keysym_t = undefined;
             //Get the keysym from the keycode (scancode + 8)
-            if (libxkbcommon.xkb_state_key_get_syms(wl.xkb_state, scancode + 8, &keysyms) == 1) {
+            if (libxkbcommon.?.xkb_state_key_get_syms(wl.xkb_state, scancode + 8, &keysyms) == 1) {
                 //Compose the keysym
                 const keysym: c.xkb_keysym_t = composeSymbol(wl, keysyms.?[0]);
 
                 //Try to convert that keysym to a unicode codepoint
-                const codepoint = libxkbcommon.xkb_keysym_to_utf32(keysym);
+                const codepoint = libxkbcommon.?.xkb_keysym_to_utf32(keysym);
                 if (codepoint != 0) {
                     core_ptr.pushEvent(.{ .char_input = .{ .codepoint = @truncate(codepoint), .window_id = window_id } });
                 }
@@ -570,7 +574,7 @@ const keyboard_listener = struct {
             return;
 
         // TODO: handle this return value
-        _ = libxkbcommon.xkb_state_update_mask(
+        _ = libxkbcommon.?.xkb_state_update_mask(
             wl.xkb_state.?,
             mods_depressed,
             mods_latched,
@@ -589,7 +593,7 @@ const keyboard_listener = struct {
             .{ wl.modifier_indices.num_lock_index, "num_lock" },
             .{ wl.modifier_indices.caps_lock_index, "caps_lock" },
         }) |key| {
-            @field(wl.modifiers, key[1]) = libxkbcommon.xkb_state_mod_index_is_active(
+            @field(wl.modifiers, key[1]) = libxkbcommon.?.xkb_state_mod_index_is_active(
                 wl.xkb_state,
                 key[0],
                 c.XKB_STATE_MODS_EFFECTIVE,
@@ -851,11 +855,11 @@ fn composeSymbol(wl: *const Native, sym: c.xkb_keysym_t) c.xkb_keysym_t {
     if (sym == c.XKB_KEY_NoSymbol or wl.compose_state == null)
         return sym;
 
-    if (libxkbcommon.xkb_compose_state_feed(wl.compose_state, sym) != c.XKB_COMPOSE_FEED_ACCEPTED)
+    if (libxkbcommon.?.xkb_compose_state_feed(wl.compose_state, sym) != c.XKB_COMPOSE_FEED_ACCEPTED)
         return sym;
 
-    return switch (libxkbcommon.xkb_compose_state_get_status(wl.compose_state)) {
-        c.XKB_COMPOSE_COMPOSED => libxkbcommon.xkb_compose_state_get_one_sym(wl.compose_state),
+    return switch (libxkbcommon.?.xkb_compose_state_get_status(wl.compose_state)) {
+        c.XKB_COMPOSE_COMPOSED => libxkbcommon.?.xkb_compose_state_get_one_sym(wl.compose_state),
         c.XKB_COMPOSE_COMPOSING, c.XKB_COMPOSE_CANCELLED => c.XKB_KEY_NoSymbol,
         else => sym,
     };

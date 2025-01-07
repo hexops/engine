@@ -107,7 +107,22 @@ pub fn initWindow(
                     else => "An unknown error occured while trying to connect to X11",
                 };
                 log.err("{s}\n\nFalling back to Wayland\n", .{err_msg});
-                try Wayland.initWindow(core, window_id);
+                Wayland.initWindow(core, window_id) catch |e| {
+                    log.err("Failed to connect to fallback display server, Wayland.\n", .{});
+                    var libs = std.ArrayList(u8).init(core.allocator);
+                    defer libs.deinit();
+                    if (X11.libx11 == null) {
+                        try libs.appendSlice("\t* " ++ X11.LibX11.lib_name ++ "\n");
+                    }
+                    if (X11.libxkbcommon == null) {
+                        try libs.appendSlice("\t* " ++ X11.LibXkbCommon.lib_name ++ "\n");
+                    }
+                    if (X11.libgl == null) {
+                        try libs.appendSlice("\t* " ++ X11.LibGL.lib_name ++ "\n");
+                    }
+                    log.err("The following X11 libraries were not available:\n{s}", .{libs.items});
+                    return e;
+                };
             };
         },
         .wayland => {
@@ -119,7 +134,19 @@ pub fn initWindow(
                     else => "An unknown error occured while trying to connect to Wayland",
                 };
                 log.err("{s}\n\nFalling back to X11\n", .{err_msg});
-                try X11.initWindow(core, window_id);
+                X11.initWindow(core, window_id) catch |e| {
+                    log.err("Failed to connect to fallback display server, X11.\n", .{});
+                    var libs = std.ArrayList(u8).init(core.allocator);
+                    defer libs.deinit();
+                    if (Wayland.libwaylandclient == null) {
+                        try libs.appendSlice("\t* " ++ Wayland.LibWaylandClient.lib_name ++ "\n");
+                    }
+                    if (Wayland.libxkbcommon == null) {
+                        try libs.appendSlice("\t* " ++ Wayland.LibXkbCommon.lib_name ++ "\n");
+                    }
+                    log.err("The following Wayland libraries were not available:\n{s}", .{libs.items});
+                    return e;
+                };
             };
         },
     }

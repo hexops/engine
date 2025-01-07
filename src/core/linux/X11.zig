@@ -33,6 +33,10 @@ pub const defaultPanic = std.debug.panicImpl;
 // TODO: determine if it's really needed to store global pointer
 var core_ptr: *Core = undefined;
 
+pub var libx11: ?LibX11 = null;
+pub var libxkbcommon: ?LibXkbCommon = null;
+pub var libgl: ?LibGL = null;
+
 pub const Native = struct {
     backend_type: gpu.BackendType,
     cursors: [@typeInfo(CursorShape).@"enum".fields.len]?c.Cursor,
@@ -40,11 +44,7 @@ pub const Native = struct {
     empty_event_pipe: [2]std.c.fd_t,
     gl_ctx: ?*LibGL.Context,
     hidden_cursor: c.Cursor,
-    libgl: ?LibGL,
-    libx11: LibX11,
     libxcursor: ?LibXCursor,
-    libxkbcommon: LibXkbCommon,
-    libxrr: ?LibXRR,
     motif_wm_hints: c.Atom,
     net_wm_bypass_compositor: c.Atom,
     net_wm_ping: c.Atom,
@@ -68,35 +68,45 @@ pub fn initWindow(
     core_ptr = core;
     var core_window = core.windows.getValue(window_id);
     // TODO(core): return errors.NotSupported if not supported
-    const libx11 = try LibX11.load();
+    // Try to load both libs so either or both missing libs can be communicated, if necessary
+    libx11 = LibX11.load() catch |err| switch (err) {
+        error.LibraryNotFound => null,
+        else => return err,
+    };
+    libxkbcommon = LibXkbCommon.load() catch |err| switch (err) {
+        error.LibraryNotFound => null,
+        else => return err,
+    };
+    libgl = LibGL.load() catch |err| switch (err) {
+        error.LibraryNotFound => null,
+        else => return err,
+    };
+    if (libx11 == null or libxkbcommon == null or libgl == null) return error.LibraryNotFound;
 
     // Note: X11 (at least, older versions of it definitely) have a race condition with frame submission
     // when the Vulkan presentation mode != .none; XInitThreads() resolves this. We use XInitThreads
     // /solely/ to ensure we can use .double and .triple presentation modes, we do not use it for
     // anything else and otherwise treat all X11 API calls as if they are not thread-safe as with all
     // other native GUI APIs.
-    _ = libx11.XInitThreads();
-    const libgl: ?LibGL = LibGL.load() catch |err| switch (err) {
+    _ = libx11.?.XInitThreads();
+
+    const libxcursor = LibXCursor.load() catch |err| switch (err) {
         error.LibraryNotFound => null,
         else => return err,
     };
-    const libxcursor: ?LibXCursor = LibXCursor.load() catch |err| switch (err) {
+    const libxrr = LibXRR.load() catch |err| switch (err) {
         error.LibraryNotFound => null,
         else => return err,
     };
-    const libxrr: ?LibXRR = LibXRR.load() catch |err| switch (err) {
-        error.LibraryNotFound => null,
-        else => return err,
-    };
-    const display = libx11.XOpenDisplay(null) orelse {
+    const display = libx11.?.XOpenDisplay(null) orelse {
         return error.FailedToConnectToDisplay;
     };
     const screen = c.DefaultScreen(display);
     const visual = c.DefaultVisual(display, screen);
     const root_window = c.RootWindow(display, screen);
 
-    const colormap = libx11.XCreateColormap(display, root_window, visual, c.AllocNone);
-    defer _ = libx11.XFreeColormap(display, colormap);
+    const colormap = libx11.?.XCreateColormap(display, root_window, visual, c.AllocNone);
+    defer _ = libx11.?.XFreeColormap(display, colormap);
 
     var set_window_attrs = c.XSetWindowAttributes{
         .colormap = colormap,
@@ -108,11 +118,11 @@ pub fn initWindow(
     };
 
     // TODO: read error after function call and handle
-    const x_window_id = libx11.XCreateWindow(
+    const x_window_id = libx11.?.XCreateWindow(
         display,
         root_window,
-        @divFloor(libx11.XDisplayWidth(display, screen), 2), // TODO: add window width?
-        @divFloor(libx11.XDisplayHeight(display, screen), 2), // TODO: add window height?
+        @divFloor(libx11.?.XDisplayWidth(display, screen), 2), // TODO: add window width?
+        @divFloor(libx11.?.XDisplayHeight(display, screen), 2), // TODO: add window height?
         core_window.width,
         core_window.height,
         0,
@@ -123,12 +133,12 @@ pub fn initWindow(
         &set_window_attrs,
     );
 
-    const blank_pixmap = libx11.XCreatePixmap(display, x_window_id, 1, 1, 1);
+    const blank_pixmap = libx11.?.XCreatePixmap(display, x_window_id, 1, 1, 1);
     var color = c.XColor{};
     core_window.refresh_rate = blk: {
-        if (libxrr != null) {
-            const conf = libxrr.?.XRRGetScreenInfo(display, root_window);
-            break :blk @intCast(libxrr.?.XRRConfigCurrentRate(conf));
+        if (libxrr) |_libxrr| {
+            const conf = _libxrr.XRRGetScreenInfo(display, root_window);
+            break :blk @intCast(_libxrr.XRRConfigCurrentRate(conf));
         }
         break :blk 60;
     };
@@ -144,22 +154,18 @@ pub fn initWindow(
         .display = display,
         .empty_event_pipe = try std.posix.pipe(),
         .gl_ctx = null,
-        .hidden_cursor = libx11.XCreatePixmapCursor(display, blank_pixmap, blank_pixmap, &color, &color, 0, 0),
-        .libgl = libgl,
-        .libx11 = libx11,
+        .hidden_cursor = libx11.?.XCreatePixmapCursor(display, blank_pixmap, blank_pixmap, &color, &color, 0, 0),
         .libxcursor = libxcursor,
-        .libxkbcommon = try LibXkbCommon.load(),
-        .libxrr = libxrr,
-        .motif_wm_hints = libx11.XInternAtom(display, "_MOTIF_WM_HINTS", c.False),
-        .net_wm_bypass_compositor = libx11.XInternAtom(display, "_NET_WM_BYPASS_COMPOSITOR", c.False),
-        .net_wm_ping = libx11.XInternAtom(display, "NET_WM_PING", c.False),
-        .net_wm_window_type = libx11.XInternAtom(display, "_NET_WM_WINDOW_TYPE", c.False),
-        .net_wm_window_type_dock = libx11.XInternAtom(display, "_NET_WM_WINDOW_TYPE_DOCK", c.False),
+        .motif_wm_hints = libx11.?.XInternAtom(display, "_MOTIF_WM_HINTS", c.False),
+        .net_wm_bypass_compositor = libx11.?.XInternAtom(display, "_NET_WM_BYPASS_COMPOSITOR", c.False),
+        .net_wm_ping = libx11.?.XInternAtom(display, "NET_WM_PING", c.False),
+        .net_wm_window_type = libx11.?.XInternAtom(display, "_NET_WM_WINDOW_TYPE", c.False),
+        .net_wm_window_type_dock = libx11.?.XInternAtom(display, "_NET_WM_WINDOW_TYPE_DOCK", c.False),
         .root_window = root_window,
         .surface_descriptor = surface_descriptor,
         .window = x_window_id,
-        .wm_delete_window = libx11.XInternAtom(display, "WM_DELETE_WINDOW", c.False),
-        .wm_protocols = libx11.XInternAtom(display, "WM_PROTOCOLS", c.False),
+        .wm_delete_window = libx11.?.XInternAtom(display, "WM_DELETE_WINDOW", c.False),
+        .wm_protocols = libx11.?.XInternAtom(display, "WM_PROTOCOLS", c.False),
     } };
     var x11 = &core_window.native.?.x11;
 
@@ -170,46 +176,42 @@ pub fn initWindow(
         _ = try std.posix.fcntl(x11.empty_event_pipe[i], std.posix.F.SETFD, df | std.posix.FD_CLOEXEC);
     }
     var protocols = [_]c.Atom{ x11.wm_delete_window, x11.net_wm_ping };
-    _ = libx11.XSetWMProtocols(x11.display, x11.window, &protocols, protocols.len);
-    _ = libx11.XStoreName(x11.display, x11.window, core_window.title);
-    _ = libx11.XSelectInput(x11.display, x11.window, set_window_attrs.event_mask);
-    _ = libx11.XMapWindow(x11.display, x11.window);
+    _ = libx11.?.XSetWMProtocols(x11.display, x11.window, &protocols, protocols.len);
+    _ = libx11.?.XStoreName(x11.display, x11.window, core_window.title);
+    _ = libx11.?.XSelectInput(x11.display, x11.window, set_window_attrs.event_mask);
+    _ = libx11.?.XMapWindow(x11.display, x11.window);
 
     // TODO: see if this can be removed
     const backend_type = try Core.detectBackendType(core.allocator);
     switch (backend_type) {
         .opengl, .opengles => {
-            if (libgl != null) {
-                // zig fmt: off
-                const attrs = &[_]c_int{
-                    LibGL.rgba,
-                    LibGL.doublebuffer,
-                    LibGL.depth_size,     24,
-                    LibGL.stencil_size,   8,
-                    LibGL.red_size,       8,
-                    LibGL.green_size,     8,
-                    LibGL.blue_size,      8,
-                    LibGL.sample_buffers, 0,
-                    LibGL.samples,        0,
-                    c.None,
-                };
-                // zig fmt: on
-                const visual_info = libgl.?.glXChooseVisual(x11.display, screen, attrs.ptr);
-                defer _ = libx11.XFree(visual_info);
-                x11.gl_ctx = libgl.?.glXCreateContext(x11.display, visual_info, null, true);
-                _ = libgl.?.glXMakeCurrent(x11.display, x11.window, x11.gl_ctx);
-            } else {
-                return error.LibGLNotFound;
-            }
+            // zig fmt: off
+            const attrs = &[_]c_int{
+                LibGL.rgba,
+                LibGL.doublebuffer,
+                LibGL.depth_size,     24,
+                LibGL.stencil_size,   8,
+                LibGL.red_size,       8,
+                LibGL.green_size,     8,
+                LibGL.blue_size,      8,
+                LibGL.sample_buffers, 0,
+                LibGL.samples,        0,
+                c.None,
+            };
+            // zig fmt: on
+            const visual_info = libgl.?.glXChooseVisual(x11.display, screen, attrs.ptr);
+            defer _ = libx11.?.XFree(visual_info);
+            x11.gl_ctx = libgl.?.glXCreateContext(x11.display, visual_info, null, true);
+            _ = libgl.?.glXMakeCurrent(x11.display, x11.window, x11.gl_ctx);
         },
         else => {},
     }
 
     // Create hidden cursor
-    const gc = libx11.XCreateGC(x11.display, blank_pixmap, 0, null);
+    const gc = libx11.?.XCreateGC(x11.display, blank_pixmap, 0, null);
     if (gc != null) {
-        _ = libx11.XDrawPoint(x11.display, blank_pixmap, gc, 0, 0);
-        _ = libx11.XFreeGC(x11.display, gc);
+        _ = libx11.?.XDrawPoint(x11.display, blank_pixmap, gc, 0, 0);
+        _ = libx11.?.XFreeGC(x11.display, gc);
     }
     x11.cursors[@intFromEnum(CursorShape.arrow)] = try createStandardCursor(x11, .arrow);
 
@@ -253,26 +255,26 @@ pub fn tick(window_id: mach.ObjectID) !void {
     var x11 = &core_window.native.?.x11;
     while (c.QLength(x11.display) != 0) {
         var event: c.XEvent = undefined;
-        _ = x11.libx11.XNextEvent(x11.display, &event);
+        _ = libx11.?.XNextEvent(x11.display, &event);
         processEvent(window_id, &event);
         // update in case core_window was changed
         core_window = core_ptr.windows.getValue(window_id);
         x11 = &core_window.native.?.x11;
     }
 
-    _ = x11.libx11.XFlush(x11.display);
+    _ = libx11.?.XFlush(x11.display);
 
     // const frequency_delay = @as(f32, @floatFromInt(x11.input.delay_ns)) / @as(f32, @floatFromInt(std.time.ns_per_s));
     // TODO: glfw.waitEventsTimeout(frequency_delay);
 }
 
 pub fn setTitle(x11: *const Native, title: [:0]const u8) void {
-    _ = x11.libx11.XStoreName(x11.display, x11.window, title);
+    _ = libx11.?.XStoreName(x11.display, x11.window, title);
 }
 
 pub fn setDisplayMode(x11: *const Native, display_mode: DisplayMode, border: bool) void {
-    const wm_state = x11.libx11.XInternAtom(x11.display, "_NET_WM_STATE", c.False);
-    const wm_fullscreen = x11.libx11.XInternAtom(x11.display, "_NET_WM_STATE_FULLSCREEN", c.False);
+    const wm_state = libx11.?.XInternAtom(x11.display, "_NET_WM_STATE", c.False);
+    const wm_fullscreen = libx11.?.XInternAtom(x11.display, "_NET_WM_STATE_FULLSCREEN", c.False);
     switch (display_mode) {
         .windowed => {
             var atoms = std.BoundedArray(c.Atom, 5){};
@@ -284,7 +286,7 @@ pub fn setDisplayMode(x11: *const Native, display_mode: DisplayMode, border: boo
             // if (x11.floating) {
             //     atoms.append(x11.net_wm_state_above) catch unreachable;
             // }
-            _ = x11.libx11.XChangeProperty(
+            _ = libx11.?.XChangeProperty(
                 x11.display,
                 x11.window,
                 wm_state,
@@ -297,37 +299,37 @@ pub fn setDisplayMode(x11: *const Native, display_mode: DisplayMode, border: boo
             x11.setFullscreen(false);
             x11.setDecorated(border);
             x11.setFloating(false);
-            _ = x11.libx11.XMapWindow(x11.display, x11.window);
-            _ = x11.libx11.XFlush(x11.display);
+            _ = libx11.?.XMapWindow(x11.display, x11.window);
+            _ = libx11.?.XFlush(x11.display);
         },
         .fullscreen => {
             x11.setFullscreen(true);
-            _ = x11.libx11.XFlush(x11.display);
+            _ = libx11.?.XFlush(x11.display);
         },
         .fullscreen_borderless => {
             x11.setDecorated(false);
             x11.setFloating(true);
             x11.setFullscreen(false);
-            _ = x11.libx11.XResizeWindow(
+            _ = libx11.?.XResizeWindow(
                 x11.display,
                 x11.window,
                 @intCast(c.DisplayWidth(x11.display, c.DefaultScreen(x11.display))),
                 @intCast(c.DisplayHeight(x11.display, c.DefaultScreen(x11.display))),
             );
-            _ = x11.libx11.XFlush(x11.display);
+            _ = libx11.?.XFlush(x11.display);
         },
     }
 }
 
 fn setFullscreen(x11: *const Native, enabled: bool) void {
-    const wm_state = x11.libx11.XInternAtom(x11.display, "_NET_WM_STATE", c.False);
-    const wm_fullscreen = x11.libx11.XInternAtom(x11.display, "_NET_WM_STATE_FULLSCREEN", c.False);
+    const wm_state = libx11.?.XInternAtom(x11.display, "_NET_WM_STATE", c.False);
+    const wm_fullscreen = libx11.?.XInternAtom(x11.display, "_NET_WM_STATE_FULLSCREEN", c.False);
     x11.sendEventToWM(wm_state, &.{ @intFromBool(enabled), @intCast(wm_fullscreen), 0, 1 });
     // Force composition OFF to reduce overhead
     const compositing_disable_on: c_long = @intFromBool(enabled);
-    const bypass_compositor = x11.libx11.XInternAtom(x11.display, "_NET_WM_BYPASS_COMPOSITOR", c.False);
+    const bypass_compositor = libx11.?.XInternAtom(x11.display, "_NET_WM_BYPASS_COMPOSITOR", c.False);
     if (bypass_compositor != c.None) {
-        _ = x11.libx11.XChangeProperty(
+        _ = libx11.?.XChangeProperty(
             x11.display,
             x11.window,
             bypass_compositor,
@@ -341,8 +343,8 @@ fn setFullscreen(x11: *const Native, enabled: bool) void {
 }
 
 fn setFloating(x11: *const Native, enabled: bool) void {
-    const wm_state = x11.libx11.XInternAtom(x11.display, "_NET_WM_STATE", c.False);
-    const wm_above = x11.libx11.XInternAtom(x11.display, "_NET_WM_STATE_ABOVE", c.False);
+    const wm_state = libx11.?.XInternAtom(x11.display, "_NET_WM_STATE", c.False);
+    const wm_above = libx11.?.XInternAtom(x11.display, "_NET_WM_STATE_ABOVE", c.False);
     const net_wm_state_remove = 0;
     const net_wm_state_add = 1;
     const action: c_long = if (enabled) net_wm_state_add else net_wm_state_remove;
@@ -356,14 +358,14 @@ fn sendEventToWM(x11: *const Native, message_type: c.Atom, data: []const c_long)
     ev.xclient.message_type = message_type;
     ev.xclient.format = 32;
     @memcpy(ev.xclient.data.l[0..data.len], data);
-    _ = x11.libx11.XSendEvent(
+    _ = libx11.?.XSendEvent(
         x11.display,
         x11.root_window,
         c.False,
         c.SubstructureNotifyMask | c.SubstructureRedirectMask,
         &ev,
     );
-    _ = x11.libx11.XFlush(x11.display);
+    _ = libx11.?.XFlush(x11.display);
 }
 
 fn setDecorated(x11: *const Native, enabled: bool) void {
@@ -381,7 +383,7 @@ fn setDecorated(x11: *const Native, enabled: bool) void {
         .input_mode = 0,
         .status = 0,
     };
-    _ = x11.libx11.XChangeProperty(
+    _ = libx11.?.XChangeProperty(
         x11.display,
         x11.window,
         x11.motif_wm_hints,
@@ -393,7 +395,7 @@ fn setDecorated(x11: *const Native, enabled: bool) void {
     );
 }
 
-const LibX11 = struct {
+pub const LibX11 = struct {
     handle: std.DynLib,
     XInitThreads: *const @TypeOf(c.XInitThreads),
     XrmInitialize: *const @TypeOf(c.XrmInitialize),
@@ -437,9 +439,12 @@ const LibX11 = struct {
     XAllocSizeHints: *const @TypeOf(c.XAllocSizeHints),
     XSetWMNormalHints: *const @TypeOf(c.XSetWMNormalHints),
     XFree: *const @TypeOf(c.XFree),
+
+    pub const lib_name = "libX11.so.6";
+
     pub fn load() !LibX11 {
         var lib: LibX11 = undefined;
-        lib.handle = try mach.dynLibOpen("libX11.so.6");
+        lib.handle = std.DynLib.open(lib_name) catch return error.LibraryNotFound;
         inline for (@typeInfo(LibX11).@"struct".fields[1..]) |field| {
             const name = std.fmt.comptimePrint("{s}\x00", .{field.name});
             const name_z: [:0]const u8 = @ptrCast(name[0 .. name.len - 1]);
@@ -459,7 +464,7 @@ const LibXCursor = struct {
     XcursorLibraryLoadImage: *const @TypeOf(c.XcursorLibraryLoadImage),
     pub fn load() !LibXCursor {
         var lib: LibXCursor = undefined;
-        lib.handle = try mach.dynLibOpen("libXcursor.so.1");
+        lib.handle = std.DynLib.open("libXcursor.so.1") catch return error.LibraryNotFound;
         inline for (@typeInfo(LibXCursor).@"struct".fields[1..]) |field| {
             const name = std.fmt.comptimePrint("{s}\x00", .{field.name});
             const name_z: [:0]const u8 = @ptrCast(name[0 .. name.len - 1]);
@@ -475,7 +480,7 @@ const LibXRR = struct {
     XRRConfigCurrentRate: *const @TypeOf(c.XRRConfigCurrentRate),
     pub fn load() !LibXRR {
         var lib: LibXRR = undefined;
-        lib.handle = try mach.dynLibOpen("libXrandr.so.1");
+        lib.handle = std.DynLib.open("libXrandr.so.1") catch return error.LibraryNotFound;
         inline for (@typeInfo(LibXRR).@"struct".fields[1..]) |field| {
             const name = std.fmt.comptimePrint("{s}\x00", .{field.name});
             const name_z: [:0]const u8 = @ptrCast(name[0 .. name.len - 1]);
@@ -485,7 +490,7 @@ const LibXRR = struct {
     }
 };
 
-const LibGL = struct {
+pub const LibGL = struct {
     const Drawable = c.XID;
     const Context = opaque {};
     const FBConfig = opaque {};
@@ -504,9 +509,12 @@ const LibGL = struct {
     glXMakeCurrent: *const fn (*c.Display, Drawable, ?*Context) callconv(.C) bool,
     glXChooseVisual: *const fn (*c.Display, c_int, [*]const c_int) callconv(.C) *c.XVisualInfo,
     glXSwapBuffers: *const fn (*c.Display, Drawable) callconv(.C) bool,
+
+    pub const lib_name = "libGL.so.1";
+
     pub fn load() !LibGL {
         var lib: LibGL = undefined;
-        lib.handle = try mach.dynLibOpen("libGL.so.1");
+        lib.handle = std.DynLib.open(lib_name) catch return error.LibraryNotFound;
         inline for (@typeInfo(LibGL).@"struct".fields[1..]) |field| {
             const name = std.fmt.comptimePrint("{s}\x00", .{field.name});
             const name_z: [:0]const u8 = @ptrCast(name[0 .. name.len - 1]);
@@ -516,7 +524,7 @@ const LibGL = struct {
     }
 };
 
-const LibXkbCommon = struct {
+pub const LibXkbCommon = struct {
     handle: std.DynLib,
 
     // xkb_context_new: *const @TypeOf(c.xkb_context_new),
@@ -536,9 +544,11 @@ const LibXkbCommon = struct {
     // xkb_compose_state_get_one_sym: *const @TypeOf(c.xkb_compose_state_get_one_sym),
     xkb_keysym_to_utf32: *const @TypeOf(c.xkb_keysym_to_utf32),
 
+    pub const lib_name = "libxkbcommon.so.0";
+
     pub fn load() !LibXkbCommon {
         var lib: LibXkbCommon = undefined;
-        lib.handle = try mach.dynLibOpen("libxkbcommon.so.0");
+        lib.handle = std.DynLib.open(lib_name) catch return error.LibraryNotFound;
         inline for (@typeInfo(LibXkbCommon).@"struct".fields[1..]) |field| {
             const name = std.fmt.comptimePrint("{s}\x00", .{field.name});
             const name_z: [:0]const u8 = @ptrCast(name[0 .. name.len - 1]);
@@ -587,7 +597,7 @@ fn createStandardCursor(x11: *const Native, shape: CursorShape) !c.Cursor {
         .resize_all => c.XC_fleur,
         .not_allowed => c.XC_X_cursor,
     };
-    const cursor = x11.libx11.XCreateFontCursor(x11.display, xc);
+    const cursor = libx11.?.XCreateFontCursor(x11.display, xc);
     if (cursor == 0) return error.FailedToCreateCursor;
     return cursor;
 }
@@ -600,7 +610,7 @@ fn getCursorPos(x11: *const Native) Position {
     var cursor_x: c_int = 0;
     var cursor_y: c_int = 0;
     var mask: c_uint = 0;
-    _ = x11.libx11.XQueryPointer(
+    _ = libx11.?.XQueryPointer(
         x11.display,
         x11.window,
         &root_window,
@@ -624,7 +634,7 @@ fn processEvent(window_id: mach.ObjectID, event: *c.XEvent) void {
             // TODO: key repeat event
 
             var keysym: c.KeySym = undefined;
-            _ = x11.libx11.XLookupString(&event.xkey, null, 0, &keysym, null);
+            _ = libx11.?.XLookupString(&event.xkey, null, 0, &keysym, null);
 
             const key_event = KeyEvent{
                 .key = toMachKey(keysym),
@@ -636,7 +646,7 @@ fn processEvent(window_id: mach.ObjectID, event: *c.XEvent) void {
                 c.KeyPress => {
                     core_ptr.pushEvent(.{ .key_press = key_event });
 
-                    const codepoint = x11.libxkbcommon.xkb_keysym_to_utf32(@truncate(keysym));
+                    const codepoint = libxkbcommon.?.xkb_keysym_to_utf32(@truncate(keysym));
                     if (codepoint != 0) {
                         core_ptr.pushEvent(.{ .char_input = .{ .codepoint = @truncate(codepoint), .window_id = window_id } });
                     }
@@ -696,7 +706,7 @@ fn processEvent(window_id: mach.ObjectID, event: *c.XEvent) void {
                     // it's still responding to events
                     var reply = event.*;
                     reply.xclient.window = x11.root_window;
-                    _ = x11.libx11.XSendEvent(
+                    _ = libx11.?.XSendEvent(
                         x11.display,
                         x11.root_window,
                         c.False,
@@ -761,7 +771,7 @@ fn processEvent(window_id: mach.ObjectID, event: *c.XEvent) void {
             core_ptr.pushEvent(.{ .focus_lost = .{ .window_id = window_id } });
         },
         c.ResizeRequest => {
-            _ = x11.libx11.XResizeWindow(
+            _ = libx11.?.XResizeWindow(
                 x11.display,
                 x11.window,
                 @intCast(c.DisplayWidth(x11.display, c.DefaultScreen(x11.display))),

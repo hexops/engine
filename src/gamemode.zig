@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const mach = @import("main.zig");
 
 const log = std.log.scoped(.gamemode);
 
@@ -8,7 +7,7 @@ test {
     std.testing.refAllDeclsRecursive(@This());
 }
 
-pub const LoadError = error{ MissingSymbol, LibraryNotFound } || std.DynLib.Error;
+pub const LoadError = error{MissingSymbol} || std.DynLib.Error;
 pub const Error = error{ RequestFailed, RequestRejected };
 
 pub const Status = enum(u8) {
@@ -101,9 +100,9 @@ const linux_impl = struct {
     pub fn tryInit() LoadError!void {
         if (state == .init) return;
 
-        var dl = mach.dynLibOpen("libgamemode.so.0") catch |e| switch (e) {
+        var dl = std.DynLib.open("libgamemode.so.0") catch |e| switch (e) {
             // backwards-compatibility for old gamemode versions
-            error.LibraryNotFound => try mach.dynLibOpen("libgamemode.so"),
+            error.FileNotFound => try std.DynLib.open("libgamemode.so"),
             else => return e,
         };
         errdefer dl.close();
@@ -129,7 +128,7 @@ const linux_impl = struct {
             .failed => return false,
             .uninit => {
                 tryInit() catch |e| {
-                    if (e != error.LibraryNotFound) {
+                    if (e != error.FileNotFound) {
                         log.warn("Loading gamemode: '{}'. Disabling libgamemode support.", .{e});
                     }
                     state = .failed;
