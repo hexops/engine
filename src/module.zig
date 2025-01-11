@@ -226,10 +226,7 @@ pub fn Objects(options: ObjectsOptions, comptime T: type) type {
             const data = &objs.internal.data;
             const unpacked = objs.validateAndUnpack(id, "setRaw");
 
-            var current = data.get(unpacked.index);
-            @field(current, @tagName(field_name)) = value;
-
-            data.set(unpacked.index, current);
+            data.items(field_name)[unpacked.index] = value;
         }
 
         /// Sets a single field of the given object to the given value.
@@ -240,10 +237,7 @@ pub fn Objects(options: ObjectsOptions, comptime T: type) type {
             const data = &objs.internal.data;
             const unpacked = objs.validateAndUnpack(id, "set");
 
-            var current = data.get(unpacked.index);
-            @field(current, @tagName(field_name)) = value;
-
-            data.set(unpacked.index, current);
+            data.items(field_name)[unpacked.index] = value;
 
             if (options.track_fields)
                 if (std.meta.fieldIndex(T, @tagName(field_name))) |field_index|
@@ -256,8 +250,7 @@ pub fn Objects(options: ObjectsOptions, comptime T: type) type {
             const data = &objs.internal.data;
 
             const unpacked = objs.validateAndUnpack(id, "get");
-            const d = data.get(unpacked.index);
-            return @field(d, @tagName(field_name));
+            return data.items(field_name)[unpacked.index];
         }
 
         /// Get all fields.
