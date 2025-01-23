@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const mach = @import("../main.zig");
 const testing = mach.testing;
 const math = mach.math;
@@ -118,6 +120,7 @@ pub fn Mat2x2(
 
         pub const mul = Shared.mul;
         pub const mulVec = Shared.mulVec;
+        pub const format = Shared.format;
     };
 }
 
@@ -258,6 +261,7 @@ pub fn Mat3x3(
 
         pub const mul = Shared.mul;
         pub const mulVec = Shared.mulVec;
+        pub const format = Shared.format;
     };
 }
 
@@ -485,6 +489,7 @@ pub fn Mat4x4(
         pub const mulVec = Shared.mulVec;
         pub const eql = Shared.eql;
         pub const eqlApprox = Shared.eqlApprox;
+        pub const format = Shared.format;
     };
 }
 
@@ -541,6 +546,24 @@ pub fn MatShared(comptime RowVec: type, comptime ColVec: type, comptime Matrix: 
                 }
             }
             return true;
+        }
+
+        /// Custom format function for all matrix types.
+        pub inline fn format(
+            self: Matrix,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) @TypeOf(writer).Error!void {
+            const rows = @TypeOf(self).rows;
+            try writer.print("{{", .{});
+            inline for (0..rows) |r| {
+                try std.fmt.formatType(self.row(r), fmt, options, writer, 1);
+                if (r < rows - 1) {
+                    try writer.print(", ", .{});
+                }
+            }
+            try writer.print("}}", .{});
         }
     };
 }

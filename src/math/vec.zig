@@ -67,6 +67,7 @@ pub fn Vec2(comptime Scalar: type) type {
         pub const minScalar = Shared.minScalar;
         pub const eqlApprox = Shared.eqlApprox;
         pub const eql = Shared.eql;
+        pub const format = Shared.format;
     };
 }
 
@@ -190,6 +191,7 @@ pub fn Vec3(comptime Scalar: type) type {
         pub const minScalar = Shared.minScalar;
         pub const eqlApprox = Shared.eqlApprox;
         pub const eql = Shared.eql;
+        pub const format = Shared.format;
     };
 }
 
@@ -269,6 +271,7 @@ pub fn Vec4(comptime Scalar: type) type {
         pub const minScalar = Shared.minScalar;
         pub const eqlApprox = Shared.eqlApprox;
         pub const eql = Shared.eql;
+        pub const format = Shared.format;
     };
 }
 
@@ -518,6 +521,16 @@ pub fn VecShared(comptime Scalar: type, comptime VecN: type) type {
         /// between two vectors of the same type and dimensions
         pub inline fn eql(a: *const VecN, b: *const VecN) bool {
             return a.eqlApprox(b, math.eps(Scalar));
+        }
+
+        /// Custom format function for all vector types.
+        pub inline fn format(
+            self: VecN,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) @TypeOf(writer).Error!void {
+            try std.fmt.formatType(self.v, fmt, options, writer, 1);
         }
     };
 }
