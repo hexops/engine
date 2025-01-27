@@ -3181,18 +3181,16 @@ pub const RenderPassEncoder = struct {
                     } else null,
                 });
 
-                if (attach.load_op == .clear) {
-                    try clear_values.append(.{
-                        .color = .{
-                            .float_32 = [4]f32{
-                                @floatCast(attach.clear_value.r),
-                                @floatCast(attach.clear_value.g),
-                                @floatCast(attach.clear_value.b),
-                                @floatCast(attach.clear_value.a),
-                            },
+                try clear_values.append(.{
+                    .color = .{
+                        .float_32 = [4]f32{
+                            @floatCast(attach.clear_value.r),
+                            @floatCast(attach.clear_value.g),
+                            @floatCast(attach.clear_value.b),
+                            @floatCast(attach.clear_value.a),
                         },
-                    });
-                }
+                    },
+                });
 
                 extent = view.extent;
             }
@@ -3216,14 +3214,12 @@ pub const RenderPassEncoder = struct {
                 .read_only = attach.depth_read_only == .true or attach.stencil_read_only == .true,
             };
 
-            if (attach.depth_load_op == .clear or attach.stencil_load_op == .clear) {
-                try clear_values.append(.{
-                    .depth_stencil = .{
-                        .depth = attach.depth_clear_value,
-                        .stencil = attach.stencil_clear_value,
-                    },
-                });
-            }
+            try clear_values.append(.{
+                .depth_stencil = .{
+                    .depth = attach.depth_clear_value,
+                    .stencil = attach.stencil_clear_value,
+                },
+            });
 
             extent = view.extent;
         }
