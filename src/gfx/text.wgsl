@@ -113,5 +113,5 @@ fn fragMain(
   if (c.a <= 0.0) {
     discard;
   }
-  return vec4<f32>(color.rgb * c.a, color.a);
+  return vec4<f32>(color.rgb, color.a * c.a);
 }
