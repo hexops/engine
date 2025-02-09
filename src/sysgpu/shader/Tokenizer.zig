@@ -165,7 +165,7 @@ pub fn peek(tokenizer: *Tokenizer) Token {
                 result.tag = .number;
                 switch (c) {
                     '0'...'9' => {},
-                    'a'...'d', 'A'...'D' => if (!number.is_hex) break,
+                    'a'...'d', 'A'...'D', 'F' => if (!number.is_hex) break,
                     'x', 'X' => number.is_hex = true,
                     '.' => {
                         if (number.has_dot) break;

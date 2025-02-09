@@ -1393,9 +1393,9 @@ fn genNumber(astgen: *AstGen, node: NodeIndex) !InstIndex {
 
     var i: usize = 0;
     var suffix: u8 = 0;
-    var base: u8 = 10;
-    var exponent = false;
-    var dot = false;
+    var is_hex: bool = false;
+    var has_exponent = false;
+    var has_dot = false;
 
     if (bytes.len >= 2 and bytes[0] == '0') switch (bytes[1]) {
         '0'...'9' => {
@@ -1404,39 +1404,76 @@ fn genNumber(astgen: *AstGen, node: NodeIndex) !InstIndex {
         },
         'x', 'X' => {
             i = 2;
-            base = 16;
+            is_hex = true;
         },
         else => {},
     };
 
-    while (i < bytes.len) : (i += 1) {
+    while (i < (bytes.len - 1)) : (i += 1) {
         const c = bytes[i];
         switch (c) {
-            'f', 'h' => suffix = c,
-            'i', 'u' => {
-                if (dot or suffix == 'f' or suffix == 'h' or exponent) {
-                    try astgen.errors.add(node_loc, "suffix '{c}' on float literal", .{c}, null);
-                    return error.AnalysisFail;
+            'e', 'E' => {
+                if (is_hex) {
+                    continue;
                 }
-
-                suffix = c;
-            },
-            'e', 'E', 'p', 'P' => {
-                if (exponent) {
+                if (has_exponent) {
                     try astgen.errors.add(node_loc, "duplicate exponent '{c}'", .{c}, null);
                     return error.AnalysisFail;
                 }
-
-                exponent = true;
+                has_exponent = true;
             },
-            '.' => dot = true,
+            'p', 'P' => {
+                if (!is_hex) {
+                    try astgen.errors.add(node_loc, "hexadecimal exponent '{c}' in decimal float", .{c}, null);
+                    return error.AnalysisFail;
+                }
+                // TODO
+                try astgen.errors.add(node_loc, "hexadecimal float literals not implemented", .{}, null);
+                return error.AnalysisFail;
+            },
+            '.' => has_dot = true,
             else => {},
         }
     }
 
+    switch (bytes[bytes.len - 1]) {
+        'i', 'u' => |c| {
+            if (has_dot or has_exponent) {
+                try astgen.errors.add(node_loc, "int suffix '{c}' on float literal", .{c}, null);
+                return error.AnalysisFail;
+            } else {
+                suffix = c;
+            }
+        },
+        'h' => |c| suffix = c,
+        'f' => |c| {
+            if (!is_hex or has_dot or has_exponent) {
+                suffix = c;
+            }
+            // else is part of a hex literal
+        },
+        'e', 'E' => {
+            if (!is_hex) {
+                try astgen.errors.add(node_loc, "incomplete exponent", .{}, null);
+                return error.AnalysisFail;
+            } // else part of a hex literal
+        },
+        'p', 'P' => |c| {
+            if (!is_hex) {
+                try astgen.errors.add(node_loc, "hexadecimal exponent '{c}' in decimal float", .{c}, null);
+                return error.AnalysisFail;
+            }
+            // TODO
+            try astgen.errors.add(node_loc, "hexadecimal float literals not implemented", .{}, null);
+            return error.AnalysisFail;
+        },
+        '.' => has_dot = true,
+        else => {},
+    }
+
     var inst: Inst = undefined;
-    if (dot or exponent or suffix == 'f' or suffix == 'h') {
-        if (base == 16) {
+    if (has_dot or has_exponent or suffix == 'f' or suffix == 'h') {
+        if (is_hex) {
             // TODO
             try astgen.errors.add(node_loc, "hexadecimal float literals not implemented", .{}, null);
             return error.AnalysisFail;
